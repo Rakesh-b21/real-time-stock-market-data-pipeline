@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 def get_db_connection():
     try:
         return psycopg2.connect(
-            dbname=os.getenv('POSTGRES_DB', 'postgres'),
+            dbname=os.getenv('POSTGRES_DB', 'stocks'),
             user=os.getenv('POSTGRES_USER', 'postgres'),
             password=os.getenv('POSTGRES_PASSWORD', 'postgres'),
             host=os.getenv('POSTGRES_HOST', 'localhost'),

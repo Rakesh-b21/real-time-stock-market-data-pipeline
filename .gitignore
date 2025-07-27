@@ -27,8 +27,8 @@ var/
 # Virtual environments
 venv/
 ENV/
-.env
-.venv
+env.bak/
+venv.bak/
 
 # PyInstaller
 *.manifest
@@ -57,6 +57,10 @@ coverage.xml
 # pyenv
 .python-version
 
+# dotenv
+.env
+.env.*
+
 # mypy
 .mypy_cache/
 .dmypy.json
@@ -67,24 +71,6 @@ coverage.xml
 # VS Code
 .vscode/
 
-# macOS
+# OS files
 .DS_Store
-
-# Windows
-Thumbs.db
-Desktop.ini
-
-# Docker
-*.pid
-
-# Logs
-*.log
-
-# Database
-*.sqlite3
-*.db
-
-# Misc
-*.bak
-*.swp
-*~ 
+Thumbs.db 
