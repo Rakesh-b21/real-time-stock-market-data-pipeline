@@ -9,6 +9,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 
 PRODUCER_CMD = [sys.executable, '-m', 'producer.producer']
 CONSUMER_CMD = [sys.executable, '-m', 'consumer.consumer']
+ANALYTICS_CMD = [sys.executable, '-m', 'analytics.analytics_consumer']
 
 processes = []
 
@@ -31,6 +32,7 @@ if __name__ == '__main__':
     try:
         processes.append(start_process(PRODUCER_CMD, 'Producer'))
         processes.append(start_process(CONSUMER_CMD, 'Consumer'))
+        processes.append(start_process(ANALYTICS_CMD, 'Analytics Consumer'))
         for p in processes:
             p.wait()
     except Exception as e:

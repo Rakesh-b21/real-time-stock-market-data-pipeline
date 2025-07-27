@@ -1,4 +1,13 @@
 yfinance
 confluent-kafka
 psycopg2-binary 
-python-dotenv 
+python-dotenv
+
+# Analytics and ML dependencies
+pandas>=1.5.0
+numpy>=1.21.0
+scikit-learn>=1.1.0
+ta>=0.10.0  # Technical analysis library
+plotly>=5.0.0
+dash>=2.0.0
+joblib>=1.1.0  # For model persistence 
