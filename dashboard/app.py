@@ -147,12 +147,44 @@ def fetch_alerts(limit=50):
         logger.error(f"Error fetching alerts: {e}")
         return pd.DataFrame()
 
-def create_price_chart(df):
-    """Create candlestick chart with volume"""
+def fetch_predictions(symbol=None, limit=100, time_window='now'):
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return pd.DataFrame()
+        if time_window == 'max':
+            latest_ts = get_latest_timestamp('predictions')
+            if not latest_ts:
+                return pd.DataFrame()
+            query = """
+            SELECT symbol, timestamp, predicted_price
+            FROM predictions
+            WHERE timestamp >= %s - INTERVAL '1 hour'
+            """
+            params = [latest_ts]
+        else:
+            query = """
+            SELECT symbol, timestamp, predicted_price
+            FROM predictions
+            WHERE timestamp >= NOW() - INTERVAL '1 hour'
+            """
+            params = []
+        if symbol:
+            query += " AND symbol = %s"
+            params.append(symbol)
+        query += " ORDER BY timestamp DESC LIMIT %s"
+        params.append(limit)
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+    except Exception as e:
+        logger.error(f"Error fetching predictions: {e}")
+        return pd.DataFrame()
+
+def create_price_chart(df, pred_df=None):
+    """Create candlestick chart with volume and overlay predictions if available"""
     if df.empty:
         return go.Figure()
-    
-    # Create subplot for price and volume
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
@@ -160,8 +192,6 @@ def create_price_chart(df):
         subplot_titles=('Stock Price', 'Volume'),
         row_width=[0.7, 0.3]
     )
-    
-    # Add candlestick chart
     fig.add_trace(
         go.Candlestick(
             x=df['timestamp'],
@@ -173,8 +203,17 @@ def create_price_chart(df):
         ),
         row=1, col=1
     )
-    
-    # Add volume bars
+    if pred_df is not None and not pred_df.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=pred_df['timestamp'],
+                y=pred_df['predicted_price'],
+                mode='lines+markers',
+                name='Predicted Price',
+                line=dict(color='red', dash='dot')
+            ),
+            row=1, col=1
+        )
     fig.add_trace(
         go.Bar(
             x=df['timestamp'],
@@ -184,13 +223,11 @@ def create_price_chart(df):
         ),
         row=2, col=1
     )
-    
     fig.update_layout(
         title='Real-time Stock Price Chart',
         xaxis_rangeslider_visible=False,
         height=600
     )
-    
     return fig
 
 def create_technical_indicators_chart(df):
@@ -426,10 +463,11 @@ def update_dashboard(n_intervals, n_clicks, symbol, interval, time_window):
     symbol_filter = None if symbol == 'ALL' else symbol
     stock_df = fetch_stock_data(symbol_filter, 100, time_window)
     analytics_df = fetch_analytics_data(symbol_filter, 100, time_window)
+    pred_df = fetch_predictions(symbol_filter, 100, time_window)
     alerts_df = fetch_alerts(50)
     
     # Create charts
-    price_fig = create_price_chart(stock_df)
+    price_fig = create_price_chart(stock_df, pred_df)
     tech_fig = create_technical_indicators_chart(analytics_df)
     vol_fig = create_volatility_chart(analytics_df)
     
