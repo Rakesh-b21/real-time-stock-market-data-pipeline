@@ -1,0 +1,99 @@
+@startuml
+title <b>For Demonstration and Exploration of Streaming Data Systems</b>
+
+skinparam componentStyle rectangle
+skinparam shadowing true
+skinparam roundcorner 20
+skinparam backgroundColor #FAFAFA
+
+skinparam DefaultFontName "SansSerif"
+skinparam FontSize 13
+skinparam FontColor Black
+
+skinparam component {
+  FontSize 13
+  FontColor DarkSlateGray
+  FontName "SansSerif"
+  BackgroundColor White
+  BorderColor #2D2D2D
+}
+
+skinparam database {
+  FontSize 12
+  FontColor DimGray
+  FontName "SansSerif"
+  BackgroundColor #F4F4F4
+  BorderColor Gray
+}
+
+skinparam package {
+  BackgroundColor #FDFDFD
+  BorderColor Gray
+  FontColor Black
+}
+
+skinparam actor {
+  FontSize 13
+  FontColor Black
+  FontName "SansSerif"
+}
+
+' 🌐 Layered Packages
+package "Data Source" {
+  [Yahoo Finance API]
+}
+
+package "Ingestion" {
+  [Producer (Python, yfinance)]
+}
+
+package "Streaming" {
+  [Kafka Broker]
+  [Zookeeper]
+}
+
+package "Persistence" {
+  [Consumer (Python, kafka-python)]
+  [PostgreSQL: stock_prices]
+}
+
+package "Analytics" {
+  [Analytics Consumer (Python, pandas, ta)]
+  [PostgreSQL: stock_analytics]
+  [PostgreSQL: analytics_alerts]
+  [PostgreSQL: predictions]
+}
+
+package "ML" {
+  [ML Trainer (Linear Regression, joblib)]
+  [ML Batch Predictor]
+}
+
+package "Dashboard" {
+  [Dash/Plotly Dashboard]
+}
+
+actor User #lightblue
+
+' 🔁 Flow Connections
+[Yahoo Finance API] --> [Producer (Python, yfinance)]
+[Producer (Python, yfinance)] --> [Kafka Broker]
+[Kafka Broker] --> [Consumer (Python, kafka-python)]
+[Consumer (Python, kafka-python)] --> [PostgreSQL: stock_prices]
+
+[Kafka Broker] --> [Analytics Consumer (Python, pandas, ta)]
+[Analytics Consumer (Python, pandas, ta)] --> [PostgreSQL: stock_analytics]
+[Analytics Consumer (Python, pandas, ta)] --> [PostgreSQL: analytics_alerts]
+[Analytics Consumer (Python, pandas, ta)] --> [PostgreSQL: predictions]
+
+[ML Trainer (Linear Regression, joblib)] --> [ML Batch Predictor]
+[ML Batch Predictor] --> [PostgreSQL: predictions]
+
+[PostgreSQL: stock_prices] --> [Dash/Plotly Dashboard]
+[PostgreSQL: stock_analytics] --> [Dash/Plotly Dashboard]
+[PostgreSQL: analytics_alerts] --> [Dash/Plotly Dashboard]
+[PostgreSQL: predictions] --> [Dash/Plotly Dashboard]
+
+[Zookeeper] ..> [Kafka Broker] : manages
+User --> [Dash/Plotly Dashboard] : View insights
+@enduml

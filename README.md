@@ -2,6 +2,21 @@
 
 A real-time pipeline for ingesting, streaming, and persisting stock market data using Python, Kafka, and PostgreSQL.
 
+## System Design Diagram
+
+A full system design diagram (PlantUML) is available in `docs/system_design.puml`.
+
+To view the diagram:
+- Use an online PlantUML editor (e.g., https://www.planttext.com/)
+- Or use a PlantUML plugin in your IDE
+
+The diagram covers:
+- Data ingestion from Yahoo Finance
+- Streaming via Kafka
+- Persistence in PostgreSQL
+- Real-time analytics and ML predictions
+- Visualization with Dash/Plotly dashboard
+
 ## Features
 - Fetches live stock data from Yahoo Finance (configurable tickers)
 - Streams data to Kafka topic (`stock_market_data`)
