@@ -36,7 +36,7 @@ def main():
                 data = json.loads(msg.value().decode('utf-8'))
                 insert_stock_data(conn, data)
                 consumer.commit(msg)
-                logging.info(f"Inserted data for {data['symbol']} at {data['timestamp']}")
+                logging.info(f"Inserted data for {data['ticker_symbol']} at {data['timestamp']}")
                 msg_count += 1
                 if MAX_MESSAGES and msg_count >= MAX_MESSAGES:
                     break

@@ -1,39 +1,32 @@
 import os
 import pandas as pd
 import numpy as np
-import psycopg2
 import joblib
 from datetime import datetime
 from dotenv import load_dotenv
+from shared.config import ml_config
+from shared.database import db_manager
 
 load_dotenv()
 
-DB_CONFIG = {
-    'host': os.getenv('POSTGRES_HOST', 'localhost'),
-    'port': os.getenv('POSTGRES_PORT', '5432'),
-    'database': os.getenv('POSTGRES_DB', 'stocks'),
-    'user': os.getenv('POSTGRES_USER', 'postgres'),
-    'password': os.getenv('POSTGRES_PASSWORD', 'postgres')
-}
-
-MODEL_PATH = os.getenv('LR_MODEL_PATH', 'ml/linear_regression_model.joblib')
-PREDICTIONS_TABLE = os.getenv('PREDICTIONS_TABLE', 'predictions')
-WINDOW_SIZE = 5
+MODEL_PATH = ml_config.config['model_path']
+WINDOW_SIZE = ml_config.config['window_size']
 
 
 def get_db_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    return db_manager.get_connection()
 
-def fetch_latest_data(symbol='AAPL', limit=100):
+def fetch_latest_data(ticker_symbol='AAPL', limit=100):
     conn = get_db_connection()
     query = """
-        SELECT timestamp, current_price
-        FROM stock_prices
-        WHERE symbol = %s
-        ORDER BY timestamp ASC
+        SELECT spr.trade_datetime as timestamp, spr.current_price, c.company_id
+        FROM stock_prices_realtime spr
+        JOIN companies c ON spr.company_id = c.company_id
+        WHERE c.ticker_symbol = %s
+        ORDER BY spr.trade_datetime ASC
         LIMIT %s
     """
-    df = pd.read_sql_query(query, conn, params=[symbol, limit])
+    df = pd.read_sql_query(query, conn, params=[ticker_symbol, limit])
     conn.close()
     return df
 
@@ -46,53 +39,68 @@ def create_features(df, window=WINDOW_SIZE):
         timestamps.append(ts[i])
     return np.array(X), timestamps
 
-def create_predictions_table():
+def insert_predictions(company_id, ticker_symbol, timestamps, preds, model_type='LinearRegression'):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {PREDICTIONS_TABLE} (
-            id SERIAL PRIMARY KEY,
-            symbol VARCHAR(10) NOT NULL,
-            timestamp TIMESTAMPTZ NOT NULL,
-            predicted_price DECIMAL(10, 4) NOT NULL,
-            model_type VARCHAR(50),
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        CREATE INDEX IF NOT EXISTS idx_predictions_symbol_timestamp ON {PREDICTIONS_TABLE} (symbol, timestamp DESC);
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
-
-def insert_predictions(symbol, timestamps, preds, model_type='LinearRegression'):
-    conn = get_db_connection()
-    cur = conn.cursor()
+    
+    # Get the latest model_id for this model type
+    cur.execute("""
+        SELECT model_id FROM ml_models 
+        WHERE model_type = %s 
+        ORDER BY created_at DESC 
+        LIMIT 1
+    """, (model_type,))
+    result = cur.fetchone()
+    model_id = result[0] if result else None
+    
     for ts, pred in zip(timestamps, preds):
         # Convert numpy.datetime64 to Python datetime
         if isinstance(ts, np.datetime64):
             ts = pd.to_datetime(ts).to_pydatetime()
-        cur.execute(f"""
-            INSERT INTO {PREDICTIONS_TABLE} (symbol, timestamp, predicted_price, model_type)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT DO NOTHING;
-        """, (symbol, ts, float(pred), model_type))
+        
+        # Calculate prediction date (next day)
+        predicted_date = ts + pd.Timedelta(days=1)
+        
+        cur.execute("""
+            INSERT INTO predictions (
+                company_id, model_id, timestamp, predicted_date, predicted_price, 
+                prediction_type, confidence_score, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (company_id, model_id, predicted_date) DO UPDATE SET
+                predicted_price = EXCLUDED.predicted_price,
+                confidence_score = EXCLUDED.confidence_score,
+                updated_at = CURRENT_TIMESTAMP;
+        """, (company_id, model_id, ts, predicted_date, float(pred), 'next_price', 0.8))
+    
     conn.commit()
     cur.close()
     conn.close()
 
 def main():
-    symbol = os.getenv('PREDICT_SYMBOL', 'AAPL')
-    print(f"Running batch prediction for symbol: {symbol}")
-    create_predictions_table()
-    df = fetch_latest_data(symbol, 100)
+    ticker_symbol = os.getenv('PREDICT_SYMBOL', 'AAPL')
+    print(f"Running batch prediction for ticker symbol: {ticker_symbol}")
+    
+    df = fetch_latest_data(ticker_symbol, 100)
     if len(df) < WINDOW_SIZE:
         print("Not enough data for prediction.")
         return
+    
+    if df.empty:
+        print(f"No data found for ticker symbol: {ticker_symbol}")
+        return
+    
+    company_id = df['company_id'].iloc[0]
     X, timestamps = create_features(df)
-    model = joblib.load(MODEL_PATH)
-    preds = model.predict(X)
-    insert_predictions(symbol, timestamps, preds)
-    print(f"Inserted {len(preds)} predictions into {PREDICTIONS_TABLE}.")
+    
+    try:
+        model = joblib.load(MODEL_PATH)
+        preds = model.predict(X)
+        insert_predictions(company_id, ticker_symbol, timestamps, preds)
+        print(f"Inserted {len(preds)} predictions for {ticker_symbol}.")
+    except FileNotFoundError:
+        print(f"Model file not found at {MODEL_PATH}. Please train the model first.")
+    except Exception as e:
+        print(f"Error during prediction: {e}")
 
 if __name__ == "__main__":
     main() 
