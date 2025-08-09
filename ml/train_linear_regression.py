@@ -1,41 +1,34 @@
 import os
 import pandas as pd
 import numpy as np
-import psycopg2
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 import joblib
 from dotenv import load_dotenv
+from shared.config import ml_config
+from shared.database import db_manager
 
 load_dotenv()
 
-DB_CONFIG = {
-    'host': os.getenv('POSTGRES_HOST', 'localhost'),
-    'port': os.getenv('POSTGRES_PORT', '5432'),
-    'database': os.getenv('POSTGRES_DB', 'stocks'),
-    'user': os.getenv('POSTGRES_USER', 'postgres'),
-    'password': os.getenv('POSTGRES_PASSWORD', 'postgres')
-}
-
-MODEL_PATH = os.getenv('LR_MODEL_PATH', 'ml/linear_regression_model.joblib')
-
-WINDOW_SIZE = 5  # Number of previous prices to use as features
+MODEL_PATH = ml_config.config['model_path']
+WINDOW_SIZE = ml_config.config['window_size']  # Number of previous prices to use as features
 
 
 def get_db_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    return db_manager.get_connection()
 
-def fetch_data(symbol='AAPL', limit=1000):
+def fetch_data(ticker_symbol='AAPL', limit=1000):
     conn = get_db_connection()
     query = """
-        SELECT timestamp, current_price
-        FROM stock_prices
-        WHERE symbol = %s
-        ORDER BY timestamp ASC
+        SELECT spr.trade_datetime as timestamp, spr.current_price
+        FROM stock_prices_realtime spr
+        JOIN companies c ON spr.company_id = c.company_id
+        WHERE c.ticker_symbol = %s
+        ORDER BY spr.trade_datetime ASC
         LIMIT %s
     """
-    df = pd.read_sql_query(query, conn, params=[symbol, limit])
+    df = pd.read_sql_query(query, conn, params=[ticker_symbol, limit])
     conn.close()
     return df
 
@@ -48,9 +41,9 @@ def create_features(df, window=WINDOW_SIZE):
     return np.array(X), np.array(y)
 
 def main():
-    symbol = os.getenv('PREDICT_SYMBOL', 'AAPL')
-    print(f"Fetching data for symbol: {symbol}")
-    df = fetch_data(symbol)
+    ticker_symbol = os.getenv('PREDICT_SYMBOL', 'AAPL')
+    print(f"Fetching data for ticker symbol: {ticker_symbol}")
+    df = fetch_data(ticker_symbol)
     if len(df) < WINDOW_SIZE + 2:
         print("Not enough data to train model.")
         return
