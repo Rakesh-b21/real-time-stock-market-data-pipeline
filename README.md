@@ -259,7 +259,7 @@ real-time-stock-market-data-pipeline/
 ├── analytics/
 │   ├── __init__.py
 │   ├── analytics_consumer.py      # Enhanced analytics with ARIMA integration
-│   └── technical_indicators_refactored.py  # Refactored technical indicators (to be removed)
+│   └── technical_indicators.py  # Refactored technical indicators (to be removed)
 ├── dashboard/
 │   ├── __init__.py
 │   ├── app.py

@@ -29,7 +29,8 @@ def fetch_data(ticker_symbol='AAPL', limit=1000):
         LIMIT %s
     """
     df = pd.read_sql_query(query, conn, params=[ticker_symbol, limit])
-    conn.close()
+    if conn:
+        db_manager.put_connection(conn)
     return df
 
 def create_features(df, window=WINDOW_SIZE):

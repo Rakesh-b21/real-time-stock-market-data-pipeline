@@ -35,61 +35,37 @@ def get_db_connection():
 
 # Helper to get max timestamp from realtime table
 def get_latest_timestamp_realtime():
+    conn = None
     try:
         conn = get_db_connection()
         if not conn:
             return None
-        cur = conn.cursor()
-        cur.execute("SELECT MAX(trade_datetime) FROM stock_prices_realtime")
-        result = cur.fetchone()
-        conn.close()
-        return result[0]
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(trade_datetime) FROM stock_prices_realtime")
+            result = cur.fetchone()
+            return result[0] if result else None
     except Exception as e:
         logger.error(f"Error fetching latest timestamp: {e}")
         return None
+    finally:
+        if conn:
+            db_manager.put_connection(conn)
 
-# Helper to get max timestamp from analytics table
-def get_latest_timestamp_analytics():
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return None
-        cur = conn.cursor()
-        cur.execute("SELECT MAX(timestamp) FROM stock_analytics")
-        result = cur.fetchone()
-        return result[0]
-    except Exception as e:
-        logger.error(f"Error fetching latest analytics timestamp: {e}")
-        return None
-
-def fetch_stock_data(ticker_symbol=None, limit=100, time_window='now'):
-    """Fetch stock price data from database"""
+def fetch_stock_data(time_window, latest_ts, ticker_symbol=None, limit=1000):
+    """Fetch stock price data from database with variable time window"""
     try:
         conn = get_db_connection()
         if not conn:
             return pd.DataFrame()
         
-        if time_window == 'max':
-            latest_ts = get_latest_timestamp_realtime()
-            if not latest_ts:
-                return pd.DataFrame()
-            query = """
-            SELECT c.ticker_symbol, spr.current_price, spr.open_price, spr.high_price, 
-                   spr.low_price, spr.volume, spr.trade_datetime as timestamp
-            FROM stock_prices_realtime spr
-            JOIN companies c ON spr.company_id = c.company_id
-            WHERE spr.trade_datetime >= %s - INTERVAL '1 hour'
-            """
-            params = [latest_ts]
-        else:
-            query = """
-            SELECT c.ticker_symbol, spr.current_price, spr.open_price, spr.high_price, 
-                   spr.low_price, spr.volume, spr.trade_datetime as timestamp
-            FROM stock_prices_realtime spr
-            JOIN companies c ON spr.company_id = c.company_id
-            WHERE spr.trade_datetime >= NOW() - INTERVAL '1 hour'
-            """
-            params = []
+        query = """
+        SELECT c.ticker_symbol, c.currency, spr.current_price, spr.open_price, spr.high_price, 
+               spr.low_price, spr.volume, spr.trade_datetime as timestamp
+        FROM stock_prices_realtime spr
+        JOIN companies c ON spr.company_id = c.company_id
+        WHERE spr.trade_datetime >= %s
+        """ % (latest_ts.strftime("'%Y-%m-%d %H:%M:%S%z'"))
+        params = []
         
         if ticker_symbol:
             query += " AND c.ticker_symbol = %s"
@@ -99,46 +75,32 @@ def fetch_stock_data(ticker_symbol=None, limit=100, time_window='now'):
         params.append(limit)
         
         df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
         return df
     except Exception as e:
         logger.error(f"Error fetching stock data: {e}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            db_manager.put_connection(conn)
 
-def fetch_analytics_data(ticker_symbol=None, limit=100, time_window='now'):
-    """Fetch analytics data from database"""
+def fetch_analytics_data(time_window, latest_ts, ticker_symbol=None, limit=1000):
+    """Fetch analytics data from database with variable time window"""
     try:
         conn = get_db_connection()
         if not conn:
             return pd.DataFrame()
         
-        if time_window == 'max':
-            latest_ts = get_latest_timestamp_analytics()
-            if not latest_ts:
-                return pd.DataFrame()
-            query = """
-            SELECT c.ticker_symbol, sa.timestamp, sa.current_price, sa.open_price, sa.high_price, 
-                   sa.low_price, sa.volume, sa.rsi_14, sa.sma_20, sa.sma_50, sa.ema_12, sa.ema_26,
-                   sa.bb_upper, sa.bb_middle, sa.bb_lower,
-                   sa.macd, sa.macd_signal, sa.macd_histogram, sa.volatility,
-                   sa.price_change_percent, sa.volume_change_percent
-            FROM stock_analytics sa
-            JOIN companies c ON sa.company_id = c.company_id
-            WHERE sa.timestamp >= %s - INTERVAL '1 hour'
-            """
-            params = [latest_ts]
-        else:
-            query = """
-            SELECT c.ticker_symbol, sa.timestamp, sa.current_price, sa.open_price, sa.high_price, 
-                   sa.low_price, sa.volume, sa.rsi_14, sa.sma_20, sa.sma_50, sa.ema_12, sa.ema_26,
-                   sa.bb_upper, sa.bb_middle, sa.bb_lower,
-                   sa.macd, sa.macd_signal, sa.macd_histogram, sa.volatility,
-                   sa.price_change_percent, sa.volume_change_percent
-            FROM stock_analytics sa
-            JOIN companies c ON sa.company_id = c.company_id
-            WHERE sa.timestamp >= NOW() - INTERVAL '1 hour'
-            """
-            params = []
+        query = """
+        SELECT c.ticker_symbol, c.currency, sa.timestamp, sa.current_price, sa.open_price, sa.high_price, 
+               sa.low_price, sa.volume, sa.rsi_14, sa.sma_20, sa.sma_50, sa.ema_12, sa.ema_26,
+               sa.bb_upper, sa.bb_middle, sa.bb_lower,
+               sa.macd, sa.macd_signal, sa.macd_histogram, sa.volatility,
+               sa.price_change_percent, sa.volume_change_percent
+        FROM stock_analytics sa
+        JOIN companies c ON sa.company_id = c.company_id
+        WHERE sa.timestamp >= %s
+        """ % (latest_ts.strftime("'%Y-%m-%d %H:%M:%S%z'"))
+        params = []
         
         if ticker_symbol:
             query += " AND c.ticker_symbol = %s"
@@ -148,14 +110,17 @@ def fetch_analytics_data(ticker_symbol=None, limit=100, time_window='now'):
         params.append(limit)
         
         df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
         return df
     except Exception as e:
         logger.error(f"Error fetching analytics data: {e}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            db_manager.put_connection(conn)
 
 def fetch_alerts(limit=50):
     """Fetch recent alerts"""
+    conn = None
     try:
         conn = get_db_connection()
         if not conn:
@@ -169,40 +134,29 @@ def fetch_alerts(limit=50):
         LIMIT %s
         """
         df = pd.read_sql_query(query, conn, params=[limit])
-        conn.close()
         return df.to_dict('records')
     except Exception as e:
         logger.error(f"Error fetching alerts: {e}")
         return []
+    finally:
+        if conn:
+            db_manager.put_connection(conn)
 
-def fetch_predictions(ticker_symbol=None, limit=100, time_window='now'):
+def fetch_predictions(time_window, latest_ts, ticker_symbol=None, limit=100):
     """Fetch prediction data from database"""
     try:
         conn = get_db_connection()
         if not conn:
             return pd.DataFrame()
-        
-        if time_window == 'max':
-            latest_ts = get_latest_timestamp_analytics()
-            if not latest_ts:
-                return pd.DataFrame()
-            query = """
-            SELECT c.ticker_symbol, p.predicted_date, p.predicted_price, p.confidence_score,
-                   p.prediction_type, p.created_at
-            FROM predictions p
-            JOIN companies c ON p.company_id = c.company_id
-            WHERE p.created_at >= %s - INTERVAL '1 hour'
-            """
-            params = [latest_ts]
-        else:
-            query = """
-            SELECT c.ticker_symbol, p.predicted_date, p.predicted_price, p.confidence_score,
-                   p.prediction_type, p.created_at
-            FROM predictions p
-            JOIN companies c ON p.company_id = c.company_id
-            WHERE p.created_at >= NOW() - INTERVAL '1 hour'
-            """
-            params = []
+        query = """
+        SELECT c.ticker_symbol, p.predicted_date, p.predicted_price, p.confidence_score,
+               p.prediction_type, p.created_at
+        FROM predictions p
+        JOIN companies c ON p.company_id = c.company_id
+        WHERE p.created_at >= %s
+        """ % (latest_ts.strftime("'%Y-%m-%d %H:%M:%S%z'"))
+
+        params = []
         
         if ticker_symbol:
             query += " AND c.ticker_symbol = %s"
@@ -212,11 +166,13 @@ def fetch_predictions(ticker_symbol=None, limit=100, time_window='now'):
         params.append(limit)
         
         df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
         return df
     except Exception as e:
         logger.error(f"Error fetching predictions: {e}")
         return pd.DataFrame()
+    finally:
+        if conn:
+            db_manager.put_connection(conn)
 
 def fetch_arima_forecasts(ticker_symbol=None):
     """Fetch ARIMA forecasts from the forecaster"""
@@ -255,14 +211,15 @@ def get_available_tickers():
             return []
         query = "SELECT DISTINCT ticker_symbol FROM companies ORDER BY ticker_symbol"
         df = pd.read_sql_query(query, conn)
-        conn.close()
+        if conn:
+            db_manager.put_connection(conn)
         return df['ticker_symbol'].tolist()
     except Exception as e:
         logger.error(f"Error fetching tickers: {e}")
         return []
 
-def create_price_chart(df, pred_df=None, arima_forecasts=None):
-    """Create enhanced candlestick chart with volume, predictions, and ARIMA forecasts"""
+def create_price_chart(df, pred_df=None, arima_forecasts=None, time_window='1h'):
+    """Create enhanced interactive candlestick chart with volume, predictions, and ARIMA forecasts"""
     if df.empty:
         return go.Figure().add_annotation(
             text=" No data available - Start the pipeline to see real-time data",
@@ -271,20 +228,24 @@ def create_price_chart(df, pred_df=None, arima_forecasts=None):
             font=dict(size=16, color="gray")
         )
     
-    # Create subplots with better spacing
+    # Create subplots with better spacing and secondary y-axis for volume
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=(' Stock Price with ARIMA Forecasts', ' Trading Volume'),
-        row_heights=[0.7, 0.3]
+        vertical_spacing=0.03,
+        row_heights=[0.7, 0.3],
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}]]
     )
     
     # Group by ticker for multiple symbols
     for ticker in df['ticker_symbol'].unique():
         ticker_data = df[df['ticker_symbol'] == ticker].sort_values('timestamp')
         
-        # Candlestick chart
+        # Calculate moving averages for better trend visualization
+        ticker_data['SMA20'] = ticker_data['current_price'].rolling(window=20).mean()
+        ticker_data['SMA50'] = ticker_data['current_price'].rolling(window=50).mean()
+        
+        # Enhanced candlestick chart with improved visibility
         fig.add_trace(
             go.Candlestick(
                 x=ticker_data['timestamp'],
@@ -293,20 +254,58 @@ def create_price_chart(df, pred_df=None, arima_forecasts=None):
                 low=ticker_data['low_price'],
                 close=ticker_data['current_price'],
                 name=f'{ticker} Price',
-                increasing_line_color='#00cc96',
-                decreasing_line_color='#ef553b'
-            ), row=1, col=1
+                increasing_line_color='#00C851',  # Brighter green for up
+                decreasing_line_color='#FF4444',  # Brighter red for down
+                increasing_fillcolor='#00C851',   # Solid green fill
+                decreasing_fillcolor='#FF4444',   # Solid red fill
+                line=dict(width=2),               # Thicker lines for better visibility
+                whiskerwidth=1.0                 # Fuller whiskers
+            ), 
+            row=1, col=1,
+            secondary_y=False
         )
         
-        # Volume chart
+        # Add moving averages
+        fig.add_trace(
+            go.Scatter(
+                x=ticker_data['timestamp'],
+                y=ticker_data['SMA20'],
+                mode='lines',
+                name=f'{ticker} SMA20',
+                line=dict(color='#3498db', width=1.5),
+                opacity=0.8
+            ),
+            row=1, col=1,
+            secondary_y=False
+        )
+        
+        fig.add_trace(
+            go.Scatter(
+                x=ticker_data['timestamp'],
+                y=ticker_data['SMA50'],
+                mode='lines',
+                name=f'{ticker} SMA50',
+                line=dict(color='#9b59b6', width=1.5, dash='dash'),
+                opacity=0.8
+            ),
+            row=1, col=1,
+            secondary_y=False
+        )
+        
+        # Volume chart with color based on price movement
+        colors = ['#2ecc71' if close >= open_ else '#e74c3c' 
+                 for close, open_ in zip(ticker_data['current_price'], ticker_data['open_price'])]
+        
         fig.add_trace(
             go.Bar(
                 x=ticker_data['timestamp'],
                 y=ticker_data['volume'],
                 name=f'{ticker} Volume',
-                marker_color='lightblue',
-                opacity=0.7
-            ), row=2, col=1
+                marker_color=colors,
+                opacity=0.7,
+                marker_line_width=0
+            ), 
+            row=2, col=1
         )
         
         # Add ML predictions if available
@@ -319,15 +318,23 @@ def create_price_chart(df, pred_df=None, arima_forecasts=None):
                         y=pred_ticker_data['predicted_price'],
                         mode='markers+lines',
                         name=f'{ticker} ML Predictions',
-                        marker=dict(color='orange', size=8, symbol='diamond'),
-                        line=dict(dash='dot', color='orange')
-                    ), row=1, col=1
+                        marker=dict(
+                            color='#f39c12', 
+                            size=8, 
+                            symbol='diamond',
+                            line=dict(width=1, color='#d35400')
+                        ),
+                        line=dict(dash='dot', color='#f39c12', width=2),
+                        opacity=0.9
+                    ), 
+                    row=1, col=1,
+                    secondary_y=False
                 )
         
         # Add ARIMA forecasts if available
         if arima_forecasts and ticker in arima_forecasts:
             forecast_data = arima_forecasts[ticker]
-            if forecast_data and 'forecast' in forecast_data:
+            if forecast_data and 'forecast' in forecast_data and len(forecast_data['forecast']) > 0:
                 # Get last actual price point for connection
                 last_timestamp = ticker_data['timestamp'].iloc[-1]
                 last_price = ticker_data['current_price'].iloc[-1]
@@ -340,33 +347,142 @@ def create_price_chart(df, pred_df=None, arima_forecasts=None):
                     freq='H'
                 )
                 
-                # Add forecast line
-                forecast_x = [last_timestamp] + list(forecast_timestamps)
-                forecast_y = [last_price] + list(forecast_data['forecast'])
+                # Add forecast line with confidence interval
+                forecast_x = list(forecast_timestamps)
+                forecast_y = list(forecast_data['forecast'])
                 
+                # Add confidence interval if available
+                if 'confidence_interval' in forecast_data and forecast_data['confidence_interval']:
+                    ci_lower = [x[0] for x in forecast_data['confidence_interval']]
+                    ci_upper = [x[1] for x in forecast_data['confidence_interval']]
+                    
+                    # Add confidence interval
+                    fig.add_trace(
+                        go.Scatter(
+                            x=forecast_x + forecast_x[::-1],  # x, then x reversed
+                            y=ci_upper + ci_lower[::-1],     # upper, then lower reversed
+                            fill='toself',
+                            fillcolor='rgba(142, 68, 173, 0.2)',
+                            line=dict(color='rgba(255,255,255,0)'),
+                            hoverinfo="skip",
+                            showlegend=False,
+                            name='Confidence Interval'
+                        ),
+                        row=1, col=1,
+                        secondary_y=False
+                    )
+                
+                # Add forecast line
                 fig.add_trace(
                     go.Scatter(
-                        x=forecast_x,
-                        y=forecast_y,
+                        x=[last_timestamp] + forecast_x,
+                        y=[last_price] + forecast_y,
                         mode='lines+markers',
                         name=f'{ticker} ARIMA Forecast',
-                        line=dict(color='purple', width=3, dash='dash'),
-                        marker=dict(color='purple', size=6)
-                    ), row=1, col=1
+                        line=dict(color='#9b59b6', width=2.5),
+                        marker=dict(color='#8e44ad', size=6, symbol='diamond')
+                    ),
+                    row=1, col=1,
+                    secondary_y=False
                 )
     
-    # Update layout with modern styling
+    # Update layout with enhanced modern styling and interactivity
     fig.update_layout(
         title=dict(
-            text=" Real-time Stock Analysis with ARIMA Forecasting",
-            font=dict(size=20, color='#2c3e50')
+            text=f"📈 Enhanced Stock Analysis Dashboard - {time_window.upper()} View",
+            font=dict(size=24, color='#2c3e50', family='Arial, sans-serif', weight='bold'),
+            x=0.03,
+            y=0.95
         ),
-        height=700,
+        height=850,
         showlegend=True,
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        font=dict(family="Arial, sans-serif")
+        hovermode='x unified',
+        plot_bgcolor='#fafbfc',
+        paper_bgcolor='#ffffff',
+        font=dict(family="Arial, sans-serif", size=12),
+        margin=dict(l=60, r=60, t=120, b=60),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor='rgba(255,255,255,0.9)',
+            bordercolor='#e1e5eb',
+            borderwidth=1
+        ),
+        xaxis=dict(
+            rangeslider=dict(visible=False),
+            type='date',
+            showgrid=False,
+            showspikes=True,
+            spikemode='across',
+            spikesnap='cursor',
+            spikethickness=1,
+            spikedash='solid',
+            spikecolor='#95a5a6'
+        ),
+        yaxis=dict(
+            title='Price',
+            showgrid=True,
+            gridcolor='#e1e5eb',
+            fixedrange=False,
+            autorange=True,
+            showspikes=True,
+            spikethickness=1,
+            spikedash='solid',
+            spikecolor='#95a5a6'
+        ),
+        yaxis2=dict(
+            title='Volume',
+            showgrid=False,
+            fixedrange=False,
+            autorange=True
+        ),
+        hoverlabel=dict(
+            bgcolor='white',
+            font_size=12,
+            font_family='Arial, sans-serif'
+        )
     )
+    
+    # Update volume chart appearance
+    fig.update_xaxes(
+        showline=True, 
+        linewidth=1, 
+        linecolor='#e1e5eb',
+        mirror=True,
+        row=2, 
+        col=1
+    )
+    
+    # Enhanced range selector buttons
+    fig.update_xaxes(
+        rangeselector=dict(
+            buttons=list([
+                dict(count=1, label="1H", step="hour", stepmode="backward"),
+                dict(count=2, label="2H", step="hour", stepmode="backward"),
+                dict(count=4, label="4H", step="hour", stepmode="backward"),
+                dict(count=6, label="6H", step="hour", stepmode="backward"),
+                dict(count=12, label="12H", step="hour", stepmode="backward"),
+                dict(count=24, label="24H", step="hour", stepmode="backward"),
+                dict(step="all")
+            ]),
+            bgcolor='#f8f9fa',
+            activecolor='#3498db',
+            bordercolor='#e1e5eb',
+            borderwidth=1,
+            y=1.12,
+            font=dict(size=10)
+        ),
+        row=1, col=1
+    )
+    
+    # Add range slider
+    fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
+    
+    # Add range slider for volume chart
+    fig.update_xaxes(matches='x', row=2, col=1)
     
     return fig
 
@@ -512,10 +628,14 @@ app.layout = html.Div([
             dcc.Dropdown(
                 id='time-window-dropdown',
                 options=[
-                    {'label': 'Latest 1 hour (from now)', 'value': 'now'},
-                    {'label': 'Latest 1 hour available in DB', 'value': 'max'}
+                    {'label': '1 Hour', 'value': '1h'},
+                    {'label': '2 Hours', 'value': '2h'},
+                    {'label': '4 Hours', 'value': '4h'},
+                    {'label': '6 Hours', 'value': '6h'},
+                    {'label': '12 Hours', 'value': '12h'},
+                    {'label': '24 Hours', 'value': '24h'}
                 ],
-                value='now',
+                value='1h',
                 className="control-dropdown"
             )
         ], className="control-group"),
@@ -614,19 +734,30 @@ def update_dashboard(n_intervals, n_clicks, ticker_symbol, interval, time_window
             if trigger_id == 'interval-slider':
                 return dash.no_update
     
-    # Fetch data
+    # Parse time window to hours
+    time_mapping = {
+        '1h': 1, '2h': 2, '4h': 4, '6h': 6, '12h': 12, '24h': 24
+    }
+    hours = time_mapping.get(time_window, 1)
+    timestamp_window = timedelta(hours=hours)
+
+    latest_ts = get_latest_timestamp_realtime()
+    if not latest_ts:
+        latest_ts = datetime.now() - timestamp_window
+    else:
+        latest_ts = latest_ts - timestamp_window
     symbol_filter = None if ticker_symbol == 'ALL' else ticker_symbol
-    stock_df = fetch_stock_data(symbol_filter, limit=1000, time_window=time_window)
-    analytics_df = fetch_analytics_data(symbol_filter, limit=1000, time_window=time_window)
-    pred_df = fetch_predictions(symbol_filter, limit=100, time_window=time_window)
+    stock_df = fetch_stock_data(time_window=hours, latest_ts=latest_ts, ticker_symbol=symbol_filter, limit=1000)
+    analytics_df = fetch_analytics_data(time_window=hours, latest_ts=latest_ts, ticker_symbol=symbol_filter, limit=1000)
+    pred_df = fetch_predictions(time_window=hours, latest_ts=latest_ts, ticker_symbol=symbol_filter, limit=100)
     alerts = fetch_alerts(limit=20)
     
     # Fetch ARIMA forecasts and model status
     arima_forecasts = fetch_arima_forecasts(ticker_symbol)
     arima_status = get_arima_model_status()
     
-    # Create enhanced charts with ARIMA integration
-    price_fig = create_price_chart(stock_df, pred_df, arima_forecasts)
+    # Create enhanced charts with ARIMA integration and time window info
+    price_fig = create_price_chart(stock_df, pred_df, arima_forecasts, time_window)
     tech_fig = create_technical_indicators_chart(analytics_df)
     vol_fig = create_volatility_chart(analytics_df)
     
@@ -679,7 +810,7 @@ def update_dashboard(n_intervals, n_clicks, ticker_symbol, interval, time_window
                 html.Div([
                     html.H4(f"📊 {latest['ticker_symbol']}", className="stats-symbol"),
                     html.Div([
-                        html.Span(f"${latest['current_price']:.2f}", className="current-price"),
+                        html.Span(f"{latest['currency']} {latest['current_price']:.2f}", className="current-price"),
                         html.Span(f"{price_change:+.2f}%", 
                                 className="price-change", 
                                 style={'color': price_color})

@@ -21,11 +21,12 @@ def check_available_data():
         # Check recent stock data
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT ticker_symbol, COUNT(*) as data_points, 
-                       MIN(timestamp) as earliest, MAX(timestamp) as latest
-                FROM stock_data 
-                WHERE timestamp >= NOW() - INTERVAL '7 days'
-                GROUP BY ticker_symbol
+                SELECT c.ticker_symbol, COUNT(*) as data_points, 
+                       MIN(spr.trade_datetime) as earliest, MAX(spr.trade_datetime) as latest
+                FROM stock_prices_realtime spr
+                JOIN companies c ON spr.company_id = c.company_id
+                WHERE spr.trade_datetime >= NOW() - INTERVAL '7 days'
+                GROUP BY c.ticker_symbol
                 ORDER BY data_points DESC
             """)
             
@@ -70,11 +71,12 @@ def test_arima_training(symbols_with_data):
             # Fetch recent price data
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT current_price, timestamp 
-                    FROM stock_data 
-                    WHERE ticker_symbol = %s 
-                    AND timestamp >= NOW() - INTERVAL '7 days'
-                    ORDER BY timestamp ASC
+                    SELECT spr.current_price, spr.trade_datetime 
+                    FROM stock_prices_realtime spr
+                    JOIN companies c ON spr.company_id = c.company_id
+                    WHERE c.ticker_symbol = %s 
+                    AND spr.trade_datetime >= NOW() - INTERVAL '7 days'
+                    ORDER BY spr.trade_datetime ASC
                     LIMIT 100
                 """, (symbol,))
                 

@@ -31,6 +31,7 @@ CREATE TABLE companies (
     employees_count INT,
     -- JSONB column for industry-specific or miscellaneous company details
     additional_details JSONB,
+    currency VARCHAR(3) DEFAULT 'USD', -- Currency code (e.g., USD, INR, EUR) from yfinance
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

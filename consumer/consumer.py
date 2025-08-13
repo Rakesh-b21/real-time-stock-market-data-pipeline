@@ -34,9 +34,10 @@ def main():
                 continue
             try:
                 data = json.loads(msg.value().decode('utf-8'))
-                insert_stock_data(conn, data)
+                # Note: Producer already stores data to database, consumer just processes messages
+                # Removing duplicate database insert to avoid validation conflicts
                 consumer.commit(msg)
-                logging.info(f"Inserted data for {data['ticker_symbol']} at {data['timestamp']}")
+                logging.info(f"Processed message for {data['ticker_symbol']} at {data['timestamp']} (DB insert handled by producer)")
                 msg_count += 1
                 if MAX_MESSAGES and msg_count >= MAX_MESSAGES:
                     break
@@ -46,7 +47,9 @@ def main():
         pass
     finally:
         consumer.close()
-        conn.close()
+        if conn:
+            from shared.database import db_manager
+            db_manager.put_connection(conn)
 
 if __name__ == "__main__":
     main() 

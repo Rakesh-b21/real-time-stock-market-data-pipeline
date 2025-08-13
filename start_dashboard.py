@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Dashboard Launcher for Stock Market Analytics
-Run this script to start the real-time analytics dashboard
-"""
-
 import os
 import sys
 from dotenv import load_dotenv
