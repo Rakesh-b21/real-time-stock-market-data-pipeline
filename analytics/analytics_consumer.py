@@ -66,14 +66,13 @@ class AnalyticsConsumer:
         # Initialize Kafka consumer
         self.consumer = Consumer(self.kafka_config)
         
-        # Initialize database connection
-        self.db_conn = self._get_db_connection()
+        # Database connection will be managed per operation using context managers
+        # No persistent connection stored
         
     def _get_db_connection(self):
         """Get database connection from centralized manager"""
-        conn = db_manager.get_connection()
-        conn.autocommit = False
-        return conn
+        from shared.database import db_manager
+        return db_manager.get_connection()
     
     def _should_skip_extreme_values(self, indicators: Dict, ticker_symbol: str) -> bool:
         """Check if we should skip due to extreme values (non-trading hours)"""
@@ -95,18 +94,33 @@ class AnalyticsConsumer:
         
         return False
     
-    def _insert_analytics_data(self, analytics_data: Dict) -> bool:
+    def _insert_analytics_data(self, analytics_data: Dict, skip_retries_on_data_issues: bool = False) -> bool:
         """Insert analytics data into database with enhanced error handling"""
-        max_retries = 3
+        max_retries = 1 if skip_retries_on_data_issues else 3
         for attempt in range(max_retries):
+            db_conn = None
             try:
-                with self.db_conn.cursor() as cur:
+                db_conn = self._get_db_connection()
+                with db_conn.cursor() as cur:
                     # Ensure timestamp is properly formatted
                     timestamp = analytics_data.get('timestamp')
                     if isinstance(timestamp, str):
                         timestamp = pd.Timestamp(timestamp).to_pydatetime()
                     elif timestamp is None:
                         timestamp = datetime.now(timezone.utc)
+                    
+                    # Convert NumPy types to native Python types for database compatibility
+                    def convert_numpy_value(value):
+                        """Convert NumPy types to native Python types"""
+                        if value is None:
+                            return None
+                        # Handle NumPy scalar types
+                        if hasattr(value, 'item'):  # NumPy scalars have .item() method
+                            return value.item()
+                        # Handle regular NumPy arrays (convert to float)
+                        if hasattr(value, 'dtype'):
+                            return float(value)
+                        return value
                     
                     cur.execute("""
                         INSERT INTO stock_analytics (
@@ -127,35 +141,47 @@ class AnalyticsConsumer:
                     """, (
                         analytics_data['company_id'],
                         timestamp,
-                        analytics_data['current_price'],
-                        analytics_data.get('open_price'),
-                        analytics_data.get('high_price'),
-                        analytics_data.get('low_price'),
-                        analytics_data.get('volume'),
-                        analytics_data.get('rsi_14'),
-                        analytics_data.get('sma_20'),
-                        analytics_data.get('sma_50'),
-                        analytics_data.get('ema_12'),
-                        analytics_data.get('ema_26'),
-                        analytics_data.get('bb_upper'),
-                        analytics_data.get('bb_middle'),
-                        analytics_data.get('bb_lower'),
-                        analytics_data.get('macd'),
-                        analytics_data.get('macd_signal'),
-                        analytics_data.get('macd_histogram'),
-                        analytics_data.get('volatility'),
-                        analytics_data.get('price_change_percent'),
-                        analytics_data.get('volume_change_percent'),
-                        analytics_data.get('predicted_price'),
-                        analytics_data.get('prediction_confidence'),
-                        analytics_data.get('model_type')
+                        convert_numpy_value(analytics_data['current_price']),
+                        convert_numpy_value(analytics_data.get('open_price')),
+                        convert_numpy_value(analytics_data.get('high_price')),
+                        convert_numpy_value(analytics_data.get('low_price')),
+                        convert_numpy_value(analytics_data.get('volume')),
+                        convert_numpy_value(analytics_data.get('rsi_14')),
+                        convert_numpy_value(analytics_data.get('sma_20')),
+                        convert_numpy_value(analytics_data.get('sma_50')),
+                        convert_numpy_value(analytics_data.get('ema_12')),
+                        convert_numpy_value(analytics_data.get('ema_26')),
+                        convert_numpy_value(analytics_data.get('bb_upper')),
+                        convert_numpy_value(analytics_data.get('bb_middle')),
+                        convert_numpy_value(analytics_data.get('bb_lower')),
+                        convert_numpy_value(analytics_data.get('macd')),
+                        convert_numpy_value(analytics_data.get('macd_signal')),
+                        convert_numpy_value(analytics_data.get('macd_histogram')),
+                        convert_numpy_value(analytics_data.get('volatility')),
+                        convert_numpy_value(analytics_data.get('price_change_percent')),
+                        convert_numpy_value(analytics_data.get('volume_change_percent')),
+                        convert_numpy_value(analytics_data.get('predicted_price')),
+                        convert_numpy_value(analytics_data.get('prediction_confidence')),
+                        analytics_data.get('model_type')  # String, no conversion needed
                     ))
-                    self.db_conn.commit()
+                    db_conn.commit()
+                    # Success - return connection and exit
+                    from shared.database import db_manager
+                    db_manager.put_connection(db_conn)
                     return True
                     
             except Exception as e:
                 logger.error(f"Database insert attempt {attempt + 1} failed: {e}")
-                self.db_conn.rollback()
+                if db_conn:
+                    try:
+                        db_conn.rollback()
+                    except:
+                        pass
+                    # Return connection to pool after error
+                    from shared.database import db_manager
+                    db_manager.put_connection(db_conn)
+                
+                # Check if we should retry
                 if attempt < max_retries - 1:
                     time.sleep(0.5)
                     continue
@@ -165,21 +191,37 @@ class AnalyticsConsumer:
         
         return False
     
-    def _log_performance(self, processing_time_ms: int):
-        """Log performance metrics with proper timestamp handling"""
+    def _log_performance(self) -> None:
+        """Log performance metrics"""
+        conn = None
         try:
-            with self.db_conn.cursor() as cur:
-                current_timestamp = datetime.now(timezone.utc)
+            from shared.database import db_manager
+            conn = db_manager.get_connection()
+            if not conn:
+                logger.warning("Could not get database connection for performance logging")
+                return
+                
+            current_timestamp = datetime.now(timezone.utc)
+            processing_time_ms = (time.time() - self.start_time) * 1000
+            
+            with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO analytics_performance (
                         component_name, timestamp, processing_time_ms, messages_processed, errors_count
                     ) VALUES (%s, %s, %s, %s, %s)
                 """, ('analytics_consumer', current_timestamp, processing_time_ms, self.messages_processed, self.errors_count))
-                self.db_conn.commit()
+                conn.commit()
         except Exception as e:
             logger.error(f"Error logging performance: {e}")
             # Don't let performance logging errors break the main flow
-            self.db_conn.rollback()
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+        finally:
+            if conn:
+                db_manager.put_connection(conn)
     
     def _check_alerts(self, ticker_symbol: str, indicators: Dict) -> None:
         """Check for alert conditions"""
@@ -226,16 +268,35 @@ class AnalyticsConsumer:
                 })
             
             # Insert alerts
-            for alert in alerts:
-                with self.db_conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO analytics_alerts (
-                            company_id, alert_type, alert_message, indicator_value, 
-                            threshold_value, severity
-                        ) VALUES (%s, %s, %s, %s, %s, %s)
-                    """, (company_id, alert['type'], alert['message'], alert['value'], alert['threshold'], alert['severity']))
-                self.db_conn.commit()
-                logger.info(f"Alert triggered for {ticker_symbol}: {alert['message']}")
+            if alerts:
+                conn = None
+                try:
+                    from shared.database import db_manager
+                    conn = db_manager.get_connection()
+                    if not conn:
+                        logger.warning(f"Could not get database connection for alerts for {ticker_symbol}")
+                        return
+                        
+                    for alert in alerts:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                INSERT INTO analytics_alerts (
+                                    company_id, alert_type, alert_message, indicator_value, 
+                                    threshold_value, severity
+                                ) VALUES (%s, %s, %s, %s, %s, %s)
+                            """, (company_id, alert['type'], alert['message'], alert['value'], alert['threshold'], alert['severity']))
+                        conn.commit()
+                        logger.info(f"Alert triggered for {ticker_symbol}: {alert['message']}")
+                except Exception as alert_error:
+                    logger.error(f"Error inserting alerts for {ticker_symbol}: {alert_error}")
+                    if conn:
+                        try:
+                            conn.rollback()
+                        except:
+                            pass
+                finally:
+                    if conn:
+                        db_manager.put_connection(conn)
                 
         except Exception as e:
             logger.error(f"Error checking alerts for {ticker_symbol}: {e}")
@@ -303,6 +364,7 @@ class AnalyticsConsumer:
             }
             
             # Generate ARIMA forecast
+            arima_failed_insufficient_data = False
             try:
                 forecast = self.arima_forecaster.forecast_symbol(ticker_symbol, steps=1)
                 if forecast.get('forecasts'):
@@ -314,7 +376,12 @@ class AnalyticsConsumer:
                         # Convert AIC to a confidence score (0-1, higher is better)
                         analytics_data['prediction_confidence'] = max(0, min(1, 1 / (1 + abs(aic) / 100)))
             except Exception as e:
-                logger.debug(f"ARIMA forecast not available for {ticker_symbol}: {e}")
+                error_msg = str(e).lower()
+                if 'insufficient data' in error_msg:
+                    logger.debug(f"ARIMA forecast skipped for {ticker_symbol}: insufficient data")
+                    arima_failed_insufficient_data = True
+                else:
+                    logger.debug(f"ARIMA forecast not available for {ticker_symbol}: {e}")
             
             # Calculate price change percentage
             prices = self.indicators.get_price_history(ticker_symbol, limit=2)
@@ -322,8 +389,15 @@ class AnalyticsConsumer:
                 price_change = ((current_price - prices[-2]) / prices[-2]) * 100
                 analytics_data['price_change_percent'] = price_change
             
-            # Store analytics data
-            if self._insert_analytics_data(analytics_data):
+            # Store analytics data (skip if ARIMA failed due to insufficient data and no other meaningful data)
+            if arima_failed_insufficient_data and not any([
+                analytics_data.get('rsi_14'), analytics_data.get('sma_20'), 
+                analytics_data.get('volatility')
+            ]):
+                logger.debug(f"Skipping analytics insert for {ticker_symbol}: insufficient data for meaningful analysis")
+                return None
+            
+            if self._insert_analytics_data(analytics_data, skip_retries_on_data_issues=arima_failed_insufficient_data):
                 self.messages_processed += 1
                 
                 # Check for alerts
@@ -398,8 +472,7 @@ class AnalyticsConsumer:
             logger.error(f"Analytics consumer error: {e}")
         finally:
             self.consumer.close()
-            if self.db_conn:
-                self.db_conn.close()
+            # No persistent db_conn to clean up - connections are managed per operation
             logger.info("Analytics consumer stopped")
 
 if __name__ == "__main__":

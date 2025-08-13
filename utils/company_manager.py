@@ -1,8 +1,3 @@
-"""
-Company Management Module
-Handles company and industry data operations for the enhanced schema
-"""
-
 import os
 import logging
 import json
@@ -62,7 +57,8 @@ class CompanyManager:
             conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
     
     def get_or_create_company(self, ticker_symbol: str, company_name: str = None) -> str:
         """Get existing company or create new one with basic info"""
@@ -95,8 +91,8 @@ class CompanyManager:
                     INSERT INTO companies (
                         company_id, industry_id, ticker_symbol, company_name, legal_name,
                         exchange, sector, country, city, website_url, description,
-                        employees_count, additional_details
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        employees_count, additional_details, currency
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     company_id, industry_id, ticker_symbol,
                     company_name or company_info.get('longName', ticker_symbol),
@@ -108,7 +104,8 @@ class CompanyManager:
                     company_info.get('website'),
                     company_info.get('longBusinessSummary'),
                     company_info.get('fullTimeEmployees'),
-                    additional_details_json
+                    additional_details_json,
+                    company_info.get('currency')
                 ))
                 conn.commit()
                 logger.info(f"Created new company: {ticker_symbol} - {company_name or company_info.get('longName', ticker_symbol)}")
@@ -119,7 +116,8 @@ class CompanyManager:
             conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
     
     def _get_company_info_from_yahoo(self, ticker_symbol: str) -> Dict:
         """Get company information from Yahoo Finance"""
@@ -140,6 +138,7 @@ class CompanyManager:
                 'longBusinessSummary': info.get('longBusinessSummary'),
                 'fullTimeEmployees': info.get('fullTimeEmployees'),
                 'marketCap': info.get('marketCap'),
+                'currency': info.get('currency'),
                 'enterpriseValue': info.get('enterpriseValue'),
                 'trailingPE': info.get('trailingPE'),
                 'forwardPE': info.get('forwardPE'),
@@ -171,7 +170,8 @@ class CompanyManager:
             logger.error(f"Error in get_company_by_ticker: {e}")
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
     
     def get_all_companies(self) -> List[Dict]:
         """Get all companies with their industry information"""
@@ -189,7 +189,8 @@ class CompanyManager:
             logger.error(f"Error in get_all_companies: {e}")
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
     
     def get_companies_by_industry(self, industry_name: str) -> List[Dict]:
         """Get all companies in a specific industry"""
@@ -208,7 +209,8 @@ class CompanyManager:
             logger.error(f"Error in get_companies_by_industry: {e}")
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
     
     def update_company_info(self, ticker_symbol: str, **kwargs) -> bool:
         """Update company information"""
@@ -246,7 +248,8 @@ class CompanyManager:
             conn.rollback()
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
     
     def get_industry_statistics(self) -> Dict:
         """Get statistics about companies by industry"""
@@ -268,7 +271,8 @@ class CompanyManager:
             logger.error(f"Error in get_industry_statistics: {e}")
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
     
     def bulk_create_companies(self, ticker_list: List[str]) -> Dict[str, str]:
         """Bulk create companies for a list of tickers"""
@@ -302,7 +306,8 @@ class CompanyManager:
             logger.error(f"Error in get_latest_price: {e}")
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
     
     def get_price_history(self, ticker_symbol: str, days: int = 30) -> List[Dict]:
         """Get historical price data for a company"""
@@ -322,7 +327,8 @@ class CompanyManager:
             logger.error(f"Error in get_price_history: {e}")
             raise
         finally:
-            conn.close()
+            if conn:
+                db_manager.put_connection(conn)
 
 # Global instance for easy access
 company_manager = CompanyManager() 

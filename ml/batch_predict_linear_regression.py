@@ -27,7 +27,8 @@ def fetch_latest_data(ticker_symbol='AAPL', limit=100):
         LIMIT %s
     """
     df = pd.read_sql_query(query, conn, params=[ticker_symbol, limit])
-    conn.close()
+    if conn:
+        db_manager.put_connection(conn)
     return df
 
 def create_features(df, window=WINDOW_SIZE):
@@ -74,7 +75,8 @@ def insert_predictions(company_id, ticker_symbol, timestamps, preds, model_type=
     
     conn.commit()
     cur.close()
-    conn.close()
+    if conn:
+        db_manager.put_connection(conn)
 
 def main():
     ticker_symbol = os.getenv('PREDICT_SYMBOL', 'AAPL')
